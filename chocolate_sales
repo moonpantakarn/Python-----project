@@ -1,1 +1,115 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# load data
+df = pd.read_csv('Chocolate Sales.csv')
+df.head()
+df.tail()
+
+# check data types
+df.info()
+
+# [1] change columns name + strip() + \.lower -> boxship = sales, amount = quantity
+df.columns = df.columns.astype(str).str.strip().str.replace(' ', '_').str.lower()
+df = df.rename(columns = {'boxes_shipped': 'quantity', 'amount': 'sales'})
+df
+
+# [2] change data types amount + delete $
+df['sales'] = df['sales'].astype(str).str.replace('$', '').str.replace(',', '')
+df['sales'] = pd.to_numeric(df['sales'])
+df
+
+# [3] change datetime
+df['date'] = pd.to_datetime(df['date'], format = '%d-%b-%y')
+df
+
+# [4] check na
+df.isna().sum()
+
+# [5] check duplicate
+df.duplicated().sum()
+
+## count unique
+columns_check = ['sales_person', 'country', 'product']
+count = [df[col].value_counts().head(10) for col in columns_check]
+print(count, '\n')
+
+## look stat
+df.describe()
+
+# build columns year, month, day, quarter
+df['year'] = df['date'].dt.year
+df['month'] = df['date'].dt.month
+df['day'] = df['date'].dt.month
+df['quarter'] = df['date'].dt.quarter
+df
+
+# build column sales per quantity
+df['sales_per_quantity'] = df['sales'] / df['quantity']
+df
+
+# best-seller product per month
+monthly_sales = df.groupby(['year', 'month', 'product'])['sales'].agg(sum).reset_index()
+monthly_sales
+
+
+# best-seller product per quarter
+quarter_sales = df.groupby(['year', 'quarter', 'product'])['sales']\
+                .agg(sum).reset_index().sort_values('sales', ascending = False)\
+                .sort_values('quarter', ascending = True)
+quarter_sales
+
+# country_sales
+country_sales = df.groupby('country')['sales'].agg(sum).reset_index().sort_values('sales', ascending = False)
+country_sales
+
+
+# monthly sales trends
+mo = sns.relplot(data = monthly_sales,\
+                 x = 'month', y = 'sales', \
+                 kind = 'line',
+                 errorbar = None)
+
+# product sales trends
+p = sns.relplot(data = df,\
+                x = 'month', y = 'sales', \
+                kind = 'line', \
+                col = 'country', col_wrap = 3, \
+                marker = 'o', \
+                errorbar = None)
+   
+# relationship quantity and sales
+rela_sales = sns.lmplot(data = df, x = 'quantity', y = 'sales')
+
+# q1-q3 top 10 
+q1 = quarter_sales.query('quarter == 1').sort_values('sales', ascending = False)
+q1.head(10)
+
+q2 = quarter_sales.query('quarter == 2').sort_values('sales', ascending = False)
+q2.head(10)
+
+q3 = quarter_sales.query('quarter == 3').sort_values('sales', ascending = False)
+q3.head(10)
+
+# top 10 products
+product_sales = df.groupby('product')['sales'].agg(sum).reset_index().sort_values('sales', ascending = False)
+product_sales.head(10)
+
+product_sales.plot(kind = 'bar', x = 'product')
+
+# product by country 
+pro = sns.catplot(
+    data=df,\
+    x='country',\
+    col='product',\
+    col_wrap=3,\
+    kind='count', \
+    height=4,aspect=1.2, \
+    palette='viridis'         
+)
+
+
+
+
 
