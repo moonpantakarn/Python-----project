@@ -1,3 +1,3 @@
 # Python-----project
 
-This i smy project using Python
+This is my project using Python
