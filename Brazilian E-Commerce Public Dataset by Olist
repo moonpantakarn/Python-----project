@@ -1,0 +1,665 @@
+# 1. Import Library
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt  # Import matplotlib for plotting
+from plotnine import (
+    ggplot, aes, geom_line, labs, geom_col, coord_flip, geom_area,
+    geom_text, facet_wrap, scale_y_continuous, geom_point, position_stack,
+    theme, element_text, geom_histogram
+)
+from plotnine.scales import scale_x_datetime
+from plotnine.themes import theme_minimal
+from datetime import date, timedelta
+from sklearn.cluster import KMeans  # Import for K-means clustering
+from sklearn.preprocessing import StandardScaler  # Import for data normalization
+import warnings
+from typing import Dict, List, Any
+
+# 2. Load data
+try:
+    orders = pd.read_csv('olist_orders_dataset.csv')
+    order_items = pd.read_csv('olist_order_items_dataset.csv')
+    products = pd.read_csv('olist_products_dataset.csv')
+    customers = pd.read_csv('olist_customers_dataset.csv')
+    sellers = pd.read_csv('olist_sellers_dataset.csv')
+    payments = pd.read_csv('olist_order_payments_dataset.csv')
+    reviews = pd.read_csv('olist_order_reviews_dataset.csv')
+    category = pd.read_csv('product_category_name_translation.csv')
+    print("ok")
+
+    print(f"orders : {orders.shape}")
+    print(f"order_items : {order_items.shape}")
+    print(f"products : {products.shape}")
+    print(f"customers : {customers.shape}")
+    print(f"sellers : {sellers.shape}")
+    print(f"payments : {payments.shape}")
+    print(f"reviews : {reviews.shape}")
+    print(f"category : {category.shape}")
+
+except:
+    print("error")
+
+# 3. Join data
+try:
+    df = orders.merge(order_items, on = 'order_id', how = 'inner')
+    df = df.merge(products, on = 'product_id', how = 'left')
+    df = df.merge(customers, on = 'customer_id', how = 'left')
+    df = df.merge(sellers, on = 'seller_id', how = 'left')
+    df = df.merge(reviews, on = 'order_id', how = 'left')
+    df = df.merge(category, on = 'product_category_name', how = 'left')
+    
+    ## payments
+    payments_total = payments.groupby('order_id')['payment_value'].agg(sum).reset_index()
+    payment_types = payments.groupby('order_id')['payment_type'].unique().apply(lambda x: ', '.join(x)).reset_index()
+    payment_summary = payments_total.merge(payment_types, on = 'order_id', how = 'left')
+
+    ## Merge data
+    df = df.merge(payment_summary, on = 'order_id', how = 'left')
+    print(df.head())
+    
+except Exception as e:
+    print(f"An error occurred during data merging: {e}")
+    exit()
+
+# 4. Clean data
+## Change date data types
+date_columns : List[str] = ['order_purchase_timestamp', 'order_approved_at', 'order_delivered_carrier_date', 'order_delivered_customer_date', 'order_estimated_delivery_date']
+for col in date_columns:
+    if col in df.columns:
+       df[col] = pd.to_datetime(df[col], error = 'coerce')
+
+## Add year, month, day on order_purchase
+df['year'] = df['order_purchase_timestamp'].dt.year
+df['month'] = df['order_purchase_timestamp'].dt.month
+df['day'] = df['order_purchase_timestamp'].dt.day_name()
+
+## Want only Status = Delivered
+df['order_status'].unique()
+clean_df = df[df['order_status'] == 'delivered']
+
+## drop review_comment_title and review_comment_message
+clean_df = clean_df.drop(['review_comment_title', 'review_comment_message'], axis = 1)
+
+## clean NA
+clean_df.isna().sum()
+clean_df = clean_df.dropna()
+clean_df.isna().sum()
+
+## filter which start with 2017-01-01 and end with 2018-08-30
+clean_df = clean_df[ (clean_df['order_purchase_timestamp'] >= '2017-01-01') & (clean_df['order_purchase_timestamp'] <= '2018-08-30') ]
+print(clean_df.head())
+
+# 5. Analyze data
+## 5.1 Customer Behavior
+### 5.1.1 Sales Trends
+monthly_sales = clean_df.groupby(['year', 'month']).agg({'payment_value' : 'sum',
+                                                         'order_id' : 'nunique'}).reset_index()
+### add date column
+monthly_sales['date'] = pd.to_datetime(monthly_sales[['year', 'month']].assign(day=1))
+monthly_sales['revenue_millions'] = monthly_sales['payment_value'] / 1000000
+print(monthly_sales.head())
+
+### plot chart
+### sales by date
+p_rev = ggplot(data = monthly_sales, mapping = aes(x = 'date', y = 'revenue_millions')) + \
+            geom_col(size = 1) + \
+            labs(title = 'monthly sales', x = 'year / month', y = 'value (millions)') + \
+            scale_x_datetime(date_breaks='3 month', date_labels='%b-%Y') + \
+            theme_minimal()
+print(p_rev)
+
+### orders by date
+p_orders = ggplot(data = monthly_sales, mapping = aes(x = 'date', y = 'order_id')) + \
+            geom_col(size = 1) + \
+            labs(title = 'monthly orders', x = 'year / month', y = 'number of orders') + \
+            scale_x_datetime(date_breaks='3 month', date_labels='%b-%Y') + \
+            theme_minimal()
+print(p_orders)
+
+### High Season and Low Season
+peak_month = monthly_sales.sort_values(by = 'payment_value', ascending = False).iloc[0]
+low_month = monthly_sales.sort_values(by = 'payment_value', ascending = True).iloc[0]
+print(f"Peak Season / Year Sales : {peak_month['month']}/{peak_month['year']} - {peak_month['revenue_millions']:.2f} million real brazil")
+print(f"Low Season / Year Sales : {low_month['month']}/{low_month['year']} - {low_month['revenue_millions']:.2f} million real brazil")
+
+
+### 5.1.2. Product Category
+cat = clean_df.groupby('product_category_name_english').agg({'payment_value' : ['sum', 'mean'],
+                                                     'order_id' : 'nunique'}).round(2)
+### change columns name
+cat.columns = ['total_rev', 'avg_order_value', 'total_orders']
+cat = cat.reset_index()
+cat = cat.sort_values('total_rev', ascending = False).round(2).head(10)
+
+print("\nTop 10 Product Categories by Revenue:")
+print(cat)
+
+### plot charts
+p_cat_rev = ggplot(data = cat, mapping= aes(x = 'product_category_name_english', y = 'total_rev')) + \
+                geom_col() + \
+                coord_flip() + \
+                labs(title = 'Top sales by category',
+                    x = 'product category',
+                    y = 'total sales',
+                    fill = 'category') + \
+                theme_minimal()
+print(p_cat_rev)
+
+p_cat_orders = ggplot(data = cat, mapping= aes(x = 'product_category_name_english', y = 'total_orders')) + \
+                geom_col() + \
+                coord_flip() + \
+                labs(title ='Top order by category',
+                    x = 'product category',
+                    y = 'total orders',
+                    fill = 'category') + \
+                theme_minimal()
+print(p_cat_orders)
+
+print("\nTop 5 Categories by Sales:")
+for i, row in cat.head().iterrows():
+    print(f"{row['product_category_name_english']}: {row['total_rev']:,.0f} ({row['total_orders']} orders)")
+
+### 5.1.3 top 20 customers
+top_20_cus = clean_df.groupby('customer_id').agg({'payment_value' : 'sum',
+                                                  'order_id' : 'nunique'}).reset_index().\
+                                                  sort_values('payment_value', ascending = False).head(20)
+print(top_20_cus.head())
+
+### plot charts
+p_top_20_cus = ggplot(data = top_20_cus, mapping = aes(x = 'customer_id', y = 'payment_value')) +\
+                geom_col() +\
+                coord_flip() +\
+                labs(title = 'Top 20 customers',
+                x = 'customer_id',
+                y = 'total sales') +\
+                theme_minimal()
+                
+print(p_top_20_cus)
+
+### 5.1.4 time analysis
+clean_df['day_of_week'] = clean_df['order_purchase_timestamp'].dt.dayofweek
+clean_df['hour'] = clean_df['order_purchase_timestamp'].dt.hour
+
+### day of week analysis
+daily_ana = clean_df.groupby(['year', 'month', 'day_of_week']).agg({'payment_value' : 'sum',
+                                                                    'order_id' : 'nunique'}).\
+                                                                    sort_values('payment_value', ascending = False).reset_index()
+daily_ana.columns = ['year', 'month', 'day', 'total_rev', 'total_orders']
+daily_ana.head()
+
+daily_ana['day'] = daily_ana['day'].map({
+    0: 'Monday',
+    1: 'Tuesday',
+    2: 'Wednesday',
+    3: 'Thursday',
+    4: 'Friday',
+    5: 'Saturday',
+    6: 'Sunday'})
+
+### Define the correct order of the days
+day_order : list[str]= ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+
+### Convert the 'day' column to a Categorical type with the specified order
+daily_ana['day'] = pd.Categorical(daily_ana['day'], categories = day_order, ordered = True)
+print(daily_ana.head())
+
+### plot chart
+p_daily_orders = ggplot(data = daily_ana, mapping = aes(x = 'day', y = 'total_orders')) +\
+                    geom_col() +\
+                    labs(title = 'Daily Orders',
+                    x = 'day',
+                    y = 'total orders') +\
+                    theme_minimal()
+print(p_daily_orders)
+
+### 5.1.5 hour analysis
+hourly_ana = clean_df.groupby('hour').agg({'payment_value' : 'sum',
+                                         'order_id' : 'nunique'}).\
+                                         sort_values('payment_value', ascending = False).reset_index()
+print(hourly_ana.head())
+
+### plot chart
+p_hourly_orders = ggplot(data = hourly_ana, mapping = aes(x = 'hour', y = 'order_id')) +\
+                    geom_area(fill = 'lightblue') +\
+                    geom_line(color = 'steelblue', size = 3) +\
+                    labs(title = 'Hourly orders',
+                    x = 'hour',
+                    y = 'orders') +\
+                    theme_minimal()
+print(p_hourly_orders)
+
+### 5.1.6 item count per 1 orders
+item_count = clean_df.groupby('order_id')['order_item_id'].count().reset_index()
+item_count.head()
+
+item_count_dist = item_count['order_item_id'].value_counts().reset_index()
+item_count_dist.columns = ['item_count', 'order_count']
+
+### plot chart
+p_item_count = ggplot(data = item_count_dist, mapping = aes(x = 'factor(item_count)', y ='order_count'))+\
+                geom_col() +\
+                geom_text(aes(label = 'order_count')) +\
+                labs(title='Distribution of Items per Order',
+                x = 'Number of Items in order',
+                y = 'Number of Orders') +\
+                theme_minimal()
+print(p_item_count)
+
+### 5.1.7 segmantation by sum payment
+### order id group by sum (payment_value + freight_value)
+order_per_value = clean_df.groupby('order_id').agg({'price' : 'sum',
+                                                   'freight_value' : 'sum'}).reset_index()
+
+order_per_value['sum_value'] = order_per_value['payment_value'] + order_per_value['freight_value']
+order_per_value.head()
+order_per_value.describe()
+
+### segmentation sum_value
+bins : list[float] = [0, 50, 100, 200, 500, 1000, order_per_value['sum_value'].max() + 1 ]
+labels : list[str] = ['0-50', '50-100', '100-200', '200-500', '500-1000', '1000+']
+order_per_value['segment'] = pd.cut(order_per_value['sum_value'], bins = bins, labels = labels)
+
+### calculated range counts and ratio
+range_counts : pd.Series = order_per_value['segment'].value_counts().sort_index()
+range_ratio : pd.Series = ((range_counts / range_counts.sum()) * 100).round(2)
+
+### build into DataFrame
+summarize = pd.DataFrame({'value_range' : range_counts.index,
+                          'order_count' : range_counts.values,
+                          'percentage' : range_ratio.values})
+
+mean_order_count = summarize['order_count'].mean().round(2)
+mean_percentage = summarize['percentage'].mean().round(2)
+print(f" Mean Order Count : {mean_order_count} ")
+print(f" Mean Percentage : {mean_percentage}% ")
+print("\nSummary of Order Segmentation:")
+print(summarize)
+
+# 5.2 Customer Satisfaction
+## 5.2.1 Customer Review
+### review by order and avg.price
+review_df = clean_df.groupby(['review_score', 'order_id']).agg({'price' : 'sum',
+                                                                'freight_value' : 'sum'}).reset_index()
+review_df['sum_price'] = review_df['price'] + review_df['freight_value']
+print(review_df.head())
+
+### define bins
+bins = [0, 1, 2, 3, 4, 5]
+labels = ['0-1', '1-2', '2-3', '3-4', '4-5']
+review_df['score_range'] = pd.cut(review_df['review_score'], bins = bins, labels = labels)
+
+### Review Summary
+review_summary = review_df.groupby('score_range').agg({'order_id' : 'count',
+                                                       'sum_price' : 'mean'}).reset_index().round(2)
+review_summary = review_summary.rename(columns = {'order_id' : 'order_count', 'sum_price' : 'avg_price'})
+review_summary.head()
+
+### plot chart
+ratio : float = max(review_summary['order_count']) / max(review_summary['avg_price'])
+
+p_cus_review = ggplot(data = review_summary, mapping = aes(x = 'score_range')) +\
+                geom_col(aes(y='order_count')) +\
+                geom_text(aes(y='order_count', label='order_count'), size = 10) +\
+                geom_line(aes (y = 'avg_price * ratio', group = 1 )) +\
+                geom_text(aes(y = 'avg_price * ratio', label = 'avg_price'), size = 10) +\
+                labs(title = 'Customer Satisfaction',
+                x = 'review score',
+                y = 'number of orders') +\
+                theme_minimal()
+print(p_cus_review)
+
+### 5.2.2 review product category
+### segmentation review_score
+bins : list[int] = [0, 1, 2, 3, 4, 5]
+labels : list[str] = ['0-1', '1-2', '2-3', '3-4', '4-5']
+clean_df['score_range'] = pd.cut(clean_df['review_score'], bins = bins, labels = labels)
+
+### count product
+score_product_cat = clean_df.groupby(['product_category_name_english', 'score_range'])['order_id'].nunique()\
+                    .reset_index()
+
+### group  product category by order_id and sum
+total_orders_by_pro = score_product_cat.groupby('product_category_name_english')['order_id'].sum().reset_index().\
+rename(columns = {'order_id' : 'total_orders'})
+
+### merge dataframe
+score_product_cat = score_product_cat.merge(total_orders_by_pro, on = 'product_category_name_english', how = 'left')
+
+###calculate percentage
+score_product_cat['percentage'] = (score_product_cat['order_id'] / score_product_cat['total_orders'] * 100).round(2)
+
+# filter top 5 reviews (4-5)
+top_reviews = score_product_cat[score_product_cat['score_range'] == '4-5']
+
+# filter top 5 worst reviews (0-1)
+worst_reviews = score_product_cat[score_product_cat['score_range'] == '0-1']
+
+# sort top 5 reviews (4-5)
+top_5_products = top_reviews.sort_values('percentage', ascending=False).head(5)
+
+# sort top 5 worst reviews (0-1)
+worst_5_products = worst_reviews.sort_values('percentage', ascending=False).head(5)
+
+print("--- Top 5 Products by Best Review (4-5) ---")
+print(top_5_products)
+print("\n--- Top 5 Products by Worst Review (0-1) ---")
+print(worst_5_products)
+
+
+### 5.2.3 delivery average delay by reviewed
+### find top 20 product category
+top_20_products = clean_df.groupby('product_category_name_english').agg({'order_id' : 'nunique'}).reset_index().\
+                  sort_values('order_id', ascending = False).head(20)
+
+df_top_20 = clean_df[clean_df['product_category_name_english'].isin(top_20_products['product_category_name_english'])]
+df_top_20.head()
+
+### find delay date
+df_top_20['delivery_delay'] = df_top_20['order_delivered_customer_date'] - df_top_20['order_estimated_delivery_date']
+df_top_20['delivery_delay'] = df_top_20['delivery_delay'].dt.days
+df_top_20.head()
+
+### Delivery Delay by Product and review
+bins : list[int] = 0, 1, 2, 3, 4, 5
+labels : list[str] = ['0-1', '1-2', '2-3', '3-4', '4-5']
+df_top_20['score_range'] = pd.cut(df_top_20['review_score'], bins = bins, labels = labels)
+df_top_20.head()
+
+summary_table = df_top_20.groupby(['product_category_name_english', 'score_range']).\
+                agg({'delivery_delay' : 'mean'}).reset_index().round(2)
+
+print("\nAverage Delivery Delay by Product Category and Review Score:")
+print(summary_table)
+
+
+### 5.2.4 top 10 distributor by reviewed
+### filter top 10 distributor
+top_10_distributor = clean_df.groupby('seller_id').agg({'order_id' : 'nunique'}).reset_index().\
+                    sort_values('order_id', ascending = False).head(10)
+top_10_distributor.head(10)
+
+top_10_dis = clean_df[clean_df['seller_id'].isin(top_10_distributor['seller_id'])]
+top_10_dis.head()
+
+### reviewed
+bins : list[int] = 0, 1, 2, 3, 4, 5
+labels : list[str] = ['0-1', '1-2', '2-3', '3-4', '4-5']
+top_10_dis['score_range'] = pd.cut(top_10_dis['review_score'], bins = bins, labels = labels)
+top_10_dis.head()
+
+### seller score range group by order_id
+top_10_dis_summary = top_10_dis.groupby(['seller_id', 'score_range']).agg({'order_id' : 'nunique'}).reset_index().\
+                    rename(columns = {'order_id' : 'order_counts'})
+
+### find total orders group by seller id
+total_orders = top_10_dis_summary.groupby('seller_id').agg({'order_counts' : 'sum'}).reset_index().\
+                rename(columns = {'order_counts' : 'total_orders'})
+
+### merge data
+top_10_dis_summary = pd.merge(top_10_dis_summary, total_orders, on = 'seller_id')
+
+### find percentage
+top_10_dis_summary['percentage'] = (top_10_dis_summary['order_counts'] / top_10_dis_summary['total_orders'] * 100).round(2)
+print(top_10_dis_summary.head(10))
+
+### plot chart
+p_top_10_dis = ggplot(data = top_10_dis_summary, mapping = aes(x = 'seller_id', y = 'percentage', fill = 'score_range')) +\
+                geom_col(position = position_stack(reverse = True)) +\
+                labs(title = 'Top 10 Distributor by Review',
+                x = 'seller_id',
+                y = 'percentage') +\
+                theme_minimal() +\
+                theme(axis_text_x = element_text(angle = 90, hjust = 1))
+print(p_top_10_dis)
+
+## 5.3 AARRR Metrics
+### 5.3.1 Acquistion
+### filter date 2017-01-01 - 2018-30-08
+clean_df = clean_df[ (clean_df['order_purchase_timestamp'] >= '2017-01-01') & (clean_df['order_purchase_timestamp'] <= '2018-08-30') ]
+clean_df.head()
+
+### find new users
+new_users = clean_df.groupby('customer_unique_id').agg({'order_purchase_timestamp' : 'min'}).\
+            sort_values('order_purchase_timestamp', ascending = True).reset_index()
+
+### change to year and month
+new_users['users_first_month'] = new_users['order_purchase_timestamp'].dt.to_period('M')
+new_users.head()
+
+### find new user group by first month
+new_users_month = new_users.groupby('users_first_month').agg({'customer_unique_id' : 'nunique'}).reset_index().rename(columns = {'customer_unique_id' : 'new_users_count'})
+new_users_month.head()
+
+### Growth rate by lag data
+new_users_month['lag_new_users_count'] = new_users_month['new_users_count'].shift(1)
+new_users_month['growth_rate_%'] = ((new_users_month['new_users_count'] - new_users_month['lag_new_users_count']) / new_users_month['lag_new_users_count']) * 100
+new_users_month['growth_rate_%'] = new_users_month['growth_rate_%'].fillna(value = 0).round(2)
+print(new_users_month)
+
+### plot chart
+p_new_users = ggplot(data = new_users_month, mapping = aes(x = 'users_first_month', y = 'new_users_count')) +\
+                geom_col() +\
+                geom_text(aes(y = 'new_users_count', label = 'new_users_count')) +\
+                labs(title = 'New Users by Month',
+                x = 'month',
+                y = 'new_users') +\
+                theme_minimal() +\
+                theme(axis_text_x = element_text(angle = 90, hjust = 1))
+print(p_new_users)
+
+### plot line chart
+p_growth_rate = ggplot(new_users_month, aes(x = 'users_first_month', y = 'growth_rate_%'))+\
+                geom_line(color = 'red', size = 0.5, group = 1) +\
+                geom_text(aes(y = 'growth_rate_%', label = 'growth_rate_%')) +\
+                labs(title = 'New Users Growth Rate', x = 'month', y = 'growth rate %') +\
+                theme_minimal() +\
+                theme(axis_text_x = element_text(angle = 90, hjust = 1))
+print(p_growth_rate)
+
+### 5.3.2 Activation
+### find how much times customer buy staff
+cus_buy = clean_df.groupby('customer_unique_id').agg({'order_id' : 'nunique'}).reset_index()
+
+## count by order_id
+cus_buy = cus_buy['order_id'].value_counts().reset_index()
+cus_buy.columns = ['order_count', 'user_count']
+
+## percentage
+cus_buy['percentage'] = (cus_buy['user_count'] / cus_buy['user_count'].sum() * 100).round(2)
+print("\nDistribution of User Order Counts:")
+print(cus_buy)
+
+### 5.3.3 Retention (Cohort Analysis)
+### change to year-month
+clean_df['order_month'] = clean_df['order_purchase_timestamp'].dt.to_period('M')
+
+### find cohort (customer group by order_month min)
+user_first_month = clean_df.groupby('customer_unique_id').agg({'order_month' : 'min'}).reset_index()
+user_first_month = user_first_month.rename(columns = {'order_month': 'cohort_month'})
+user_first_month.head()
+
+### merge data
+df_with_cohort = clean_df.merge(user_first_month, on = 'customer_unique_id', how = 'left')
+df_with_cohort.head()
+
+### cohort_index = cohort month - order month -> use function .n to change to number
+df_with_cohort['cohort_index'] = df_with_cohort['order_month'] - df_with_cohort['cohort_month']
+df_with_cohort['cohort_index'] = df_with_cohort['cohort_index'].apply(lambda x: x.n)
+df_with_cohort.head()
+
+### customer group by cohort + cohort_index
+cohort_data = df_with_cohort.groupby(['cohort_month', 'cohort_index']).agg({'customer_unique_id' : 'nunique'}).reset_index()
+cohort_data.head()
+
+### pivot_wider()
+cohort_pivot = cohort_data.pivot(index='cohort_month',\
+                                 columns='cohort_index',\
+                                 values='customer_unique_id')
+print(cohort_pivot)
+
+### retain users / first time users
+cohort_size = cohort_pivot.iloc[:, 0]
+print(cohort_size)
+retention = cohort_pivot.divide(cohort_size, axis=0)
+print("\nCustomer Retention Cohort Matrix (Retention Rate):")
+print(retention)
+
+### 5.3.4 Referral
+### do not have data to analyze this one.
+
+### 5.3.5 Revenue
+### calculate payment per user
+revenue_users = clean_df.groupby('customer_unique_id').agg({'payment_value' : 'sum'}).reset_index()
+print(revenue_users.head())
+
+### plot chart
+p_revenue_dist = ggplot(data = revenue_users, mapping = aes(x = 'payment_value')) +\
+                    geom_histogram(bins = 30) +\
+                    labs(title = 'Payment Value Distribution',
+                    x = 'payment value',
+                    y = 'count') +\
+                    theme_minimal()
+print(p_revenue_dist)
+
+### calculate payment per month
+clean_df['order_month'] = clean_df['order_purchase_timestamp'].dt.to_period('M')
+revenue_month = clean_df.groupby('order_month').agg({'payment_value' : 'sum'}).reset_index()
+print(revenue_month.head())
+
+### plot chart
+p_monthly_revenue = ggplot(data = revenue_month, mapping = aes(x = 'order_month', y = 'payment_value')) +\
+                    geom_line(group = 1) +\
+                    geom_point() +\
+                    labs(title = 'Payment Value by Month',
+                    x = 'month',
+                    y = 'payment value') +\
+                    theme_minimal() +\
+                    theme(axis_text_x = element_text(angle = 90, hjust = 1))
+print(p_monthly_revenue)
+
+## 5.4 RFM Analysis
+### Recency
+## max date + 1 day
+clean_df.head()
+current_date = clean_df['order_purchase_timestamp'].max() + timedelta(days=1)
+
+df_recency = clean_df.groupby('customer_unique_id').agg({'order_purchase_timestamp' : 'max'}).reset_index()
+df_recency['recency'] = (current_date - df_recency['order_purchase_timestamp']).dt.days
+print(df_recency.head())
+
+### Frequency
+df_frequency = clean_df.groupby('customer_unique_id').agg({'order_id' : 'nunique'}).reset_index().\
+               rename(columns = {'order_id' : 'frequency'})
+print(df_frequency.head())
+
+### Monetary
+df_monetary = clean_df.groupby('customer_unique_id').agg({'payment_value' : 'sum'}).reset_index().\
+              rename(columns = {'payment_value' : 'monetary'})
+print(df_monetary.head())
+
+### Merge Data
+rfm_df = df_recency.merge(df_frequency, on = 'customer_unique_id', how = 'left')
+rfm_df = rfm_df.merge(df_monetary, on = 'customer_unique_id', how = 'left')
+print(rfm_df.head())
+
+### R score
+bins_r : list[Union[int, float]] = [0, 30, 90, 180, 365, np.inf]
+labels_r : list[int] = [5, 4, 3, 2, 1]
+rfm_df['r_score'] = pd.cut(rfm_df['recency'], bins = bins_r, labels = labels_r, duplicates = 'drop') ## categorial
+
+### F score
+bins_f : list[Union[int, float]] = [0, 1, 2, 4, 9, np.inf]
+labels_f : list[int] = [1, 2, 3, 4, 5]
+rfm_df['f_score'] = pd.cut(rfm_df['frequency'], bins = bins_f, labels = labels_f, duplicates = 'drop') ## categorial
+
+### M score
+bins_m : list[Union[int, float]] = [0, 50, 100, 200, 500, np.inf]
+labels_m : list[int] = [1, 2, 3, 4, 5]
+rfm_df['m_score'] = pd.cut(rfm_df['monetary'], bins = bins_m, labels = labels_m, duplicates = 'drop') ## categorial
+
+### build rfm_score
+rfm_df['rfm_score'] = rfm_df['r_score'].astype(str) + rfm_df['f_score'].astype(str) + rfm_df['m_score'].astype(str)
+print(rfm_df.head())
+
+### build customer segmentation
+def rfm_segment(row: Series) -> str:
+    r_val = int( row['r_score'] )
+    f_val = int( row['f_score'] )
+    m_val = int( row['m_score'] )
+
+    if r_val >= 5 and f_val >= 4:
+        return 'Champions'
+    elif r_val == 5 and f_val == 1:
+        return 'New Customers'
+    elif r_val >= 4 and f_val >= 2 and f_val <= 3:
+        return 'Potential Loyalists'
+    elif r_val >= 3 and r_val <= 4 and f_val >= 4 and f_val <= 5:
+        return 'Loyal Customers'
+    elif r_val == 3 and f_val == 3:
+        return 'Need Attention'
+    elif r_val == 4 and f_val == 1:
+        return 'Promising'
+    elif r_val == 3 and f_val >= 1 and f_val <= 2:
+        return 'About to Sleep'
+    elif r_val >= 1 and r_val <= 2 and f_val >= 3 and f_val <= 4:
+        return 'At Risk'
+    elif r_val >= 1 and r_val <= 2 and f_val == 5:
+        return 'Can\'t Loose'
+    elif r_val >= 1 and r_val <= 2 and f_val >= 1 and f_val <= 2:
+        return 'Hibernating'
+    else:
+        return 'Other'
+
+### Use .apply() to create a new column in the DataFrame.
+rfm_df['segment_name'] = rfm_df.apply(rfm_segment, axis=1)
+print("\nRFM DataFrame with segment name:")
+print(rfm_df[['rfm_score', 'segment_name']].head())
+
+print("\nCustomer segmentation summary:")
+print(rfm_df['segment_name'].value_counts())
+
+
+### K-means clustering
+print(df_rfm.head())
+
+## Normalization by using Z-Score
+scaler = StandardScaler()
+rfm_scaled = scaler.fit_transform(df_rfm[['recency', 'frequency', 'monetary']])
+rfm_scaled_df = pd.DataFrame(rfm_scaled)
+rfm_scaled_df.columns = ['recency_scaled', 'frequency_scaled', 'monetary_scaled']
+print(rfm_scaled_df.head())
+
+### Use the Elbow Method to find the optimal number of clusters (K)
+sse : list[float] = []
+max_clusters : int = 10
+for k in range(1, max_clusters + 1):
+    kmeans = KMeans(n_clusters = k, random_state = 42, n_init = 10)
+    kmeans.fit(rfm_scaled)
+    sse.append(kmeans.inertia_)
+
+### Plot the Elbow Method results
+plt.figure(figsize = (8, 5))
+plt.plot(range(1, max_clusters + 1), sse, marker='o', color='b')
+plt.title('Elbow Method')
+plt.xlabel('K')
+plt.ylabel('SSE')
+plt.tight_layout()
+plt.show()
+
+## select the optimal K = 3
+k_optimal : int = 3
+kmeans = KMeans(n_clusters = k_optimal, random_state = 42, n_init = 10)
+df_rfm['Cluster'] = kmeans.fit_predict(rfm_scaled)
+
+## Each cluster by mean
+cluster_analysis : pd.DataFrame = df_rfm.groupby('Cluster').agg({'recency': 'mean',
+                                                                 'frequency': 'mean',
+                                                                 'monetary': 'median'}).round(2)
+
+print(cluster_analysis.head())
+print(df_rfm.head())
+
+### Display the count of customers in each cluster
+cluster_counts : pd.Series = df_rfm['Cluster'].value_counts().sort_index()
+print("\nCluster Distribution:")
+print(cluster_counts)
