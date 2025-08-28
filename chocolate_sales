@@ -2,32 +2,32 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-# load data
+# 1. load data
 df = pd.read_csv('Chocolate Sales.csv')
-df.head()
-df.tail()
+print(df.head())
 
-# check data types
+## check data types
 df.info()
 
-# [1] change columns name + strip() + \.lower -> boxship = sales, amount = quantity
+# 2. Clean data
+## [1] change columns name + strip() + \.lower -> boxship = sales, amount = quantity
 df.columns = df.columns.astype(str).str.strip().str.replace(' ', '_').str.lower()
 df = df.rename(columns = {'boxes_shipped': 'quantity', 'amount': 'sales'})
-df
+print(df.head())
 
-# [2] change data types amount + delete $
+## [2] change data types amount + delete $
 df['sales'] = df['sales'].astype(str).str.replace('$', '').str.replace(',', '')
 df['sales'] = pd.to_numeric(df['sales'])
-df
+print(df.head())
 
-# [3] change datetime
+## [3] change datetime
 df['date'] = pd.to_datetime(df['date'], format = '%d-%b-%y')
-df
+print(df.head())
 
-# [4] check na
+## [4] check na
 df.isna().sum()
 
-# [5] check duplicate
+## [5] check duplicate
 df.duplicated().sum()
 
 ## count unique
@@ -38,78 +38,180 @@ print(count, '\n')
 ## look stat
 df.describe()
 
-# build columns year, month, day, quarter
+## build columns year, month, day, quarter
 df['year'] = df['date'].dt.year
 df['month'] = df['date'].dt.month
 df['day'] = df['date'].dt.month
 df['quarter'] = df['date'].dt.quarter
-df
+print(df.head())
 
 # build column sales per quantity
 df['sales_per_quantity'] = df['sales'] / df['quantity']
 df
 
-# best-seller product per month
+# Analyze data
+# 1. Trend Sales and quantity in each country
+## best-seller product per month
 monthly_sales = df.groupby(['year', 'month', 'product'])['sales'].agg(sum).reset_index()
 monthly_sales
 
+## monthly trends
+p_monthly_sales = sns.relplot(data = monthly_sales,\
+				            x = 'month', y = 'sales', \
+				            kind = 'line',
+				            errorbar = None)
 
-# best-seller product per quarter
-quarter_sales = df.groupby(['year', 'quarter', 'product'])['sales']\
-                .agg(sum).reset_index().sort_values('sales', ascending = False)\
-                .sort_values('quarter', ascending = True)
-quarter_sales
+## sales , quantity group by country
+country_sales = df.groupby('country')[['sales', 'quantity', 'sales_per_quantity']]\
+                .agg(sum).reset_index()\
+                .sort_values('sales', ascending = False).round(2)
+print(country_sales.head())
 
-# country_sales
-country_sales = df.groupby('country')['sales'].agg(sum).reset_index().sort_values('sales', ascending = False)
-country_sales
-
-
-# monthly sales trends
-mo = sns.relplot(data = monthly_sales,\
-                 x = 'month', y = 'sales', \
-                 kind = 'line',
-                 errorbar = None)
-
-# product sales trends
-p = sns.relplot(data = df,\
+## plot chart
+monthly_trend = sns.relplot(data = df,\
                 x = 'month', y = 'sales', \
                 kind = 'line', \
                 col = 'country', col_wrap = 3, \
                 marker = 'o', \
                 errorbar = None)
-   
-# relationship quantity and sales
-rela_sales = sns.lmplot(data = df, x = 'quantity', y = 'sales')
 
-# q1-q3 top 10 
-q1 = quarter_sales.query('quarter == 1').sort_values('sales', ascending = False)
-q1.head(10)
+# 2. Which chocolate product is the best seller
+## top 10 best seller
+product_sales = df.groupby('product')[['sales', 'quantity']].agg(sum).reset_index().sort_values('sales', ascending = False)
+print(product_sales.head(10))
 
-q2 = quarter_sales.query('quarter == 2').sort_values('sales', ascending = False)
-q2.head(10)
+## plot chart
+p_product = product_sales.plot(kind = 'bar', x = 'product')
+print(p_product)
 
-q3 = quarter_sales.query('quarter == 3').sort_values('sales', ascending = False)
-q3.head(10)
+## top 5 UK
+UK_product = df.query('country == "UK"').sort_values('sales', ascending = False)
+top5_uk_product = UK_product.groupby(['product', 'country'])['sales'].sum().sort_values(ascending=False).reset_index().head(5)
+print(top5_uk_product.head())
 
-# top 10 products
-product_sales = df.groupby('product')['sales'].agg(sum).reset_index().sort_values('sales', ascending = False)
-product_sales.head(10)
+## Filter for specific products in the UK
+uk_products = df[(df['country'] == 'UK') & 
+                 (df['product'].isin(['Peanut Butter Cubes', '99% Dark & Pure', 'Smooth Sliky Salty', 'White Choc', 'Almond Choco']))]
+print(uk_products.head())
 
-product_sales.plot(kind = 'bar', x = 'product')
+p_uk_products = sns.relplot(data = uk_products,\
+                x = 'month', y = 'sales', \
+                kind = 'line', \
+                col = 'product', col_wrap = 3, \
+                marker = 'o', \
+                errorbar = None)
+## top 5 India
+IN_product = df.query('country == "India"').sort_values('sales', ascending = False)
+top5_in_product = IN_product.groupby(['product', 'country'])['sales'].sum().sort_values(ascending=False).reset_index().head(5)
+print(top5_in_product.head())
 
-# product by country 
-pro = sns.catplot(
-    data=df,\
-    x='country',\
-    col='product',\
-    col_wrap=3,\
-    kind='count', \
-    height=4,aspect=1.2, \
-    palette='viridis'         
-)
+## Filter for specific products in the India
+india_products = df[(df['country'] == 'India') & 
+                 (df['product'].isin(['Eclairs', 'Peanut Butter Cubes', 'Smooth Sliky Salty', 'Spicy Special Slims', 'Mint Chip Choco']))]
+print(india_products.head())
+
+p_india_products = sns.relplot(data = india_products,\
+                    x = 'month', y = 'sales', \
+                    kind = 'line', \
+                    col = 'product', col_wrap = 3, \
+                    marker = 'o', \
+                    errorbar = None)
+## top 5 Australia
+AUS_product = df.query('country == "Australia"').sort_values('sales', ascending = False)
+top5_aus_product = AUS_product.groupby(['product', 'country'])['sales'].sum().sort_values(ascending=False).reset_index().head(5)
+print(top5_aus_product.head())
+
+## Filter for specific products in the Australia
+aus_products = df[(df['country'] == 'Australia') & 
+                 (df['product'].isin(['50% Dark Bites', 'Eclairs', 'Milk Bars', 'Spicy Special Slims', 'Organic Choco Syrup']))]
+print(top5_aus_products.head())
+
+p_india_products = sns.relplot(data = aus_products,\
+                    x = 'month', y = 'sales', \
+                    kind = 'line', \
+                    col = 'product', col_wrap = 3, \
+                    marker = 'o', \
+                    errorbar = None)
+
+## top 5 new zealand
+NEW_product = df.query('country == "New Zealand"').sort_values('sales', ascending = False)
+top5_new_product = NEW_product.groupby(['product', 'country'])['sales'].sum().sort_values(ascending=False).reset_index().head(5)
+print(top5_new_product.head())
+
+## Filter for specific products in the New Zealand
+new_products = df[(df['country'] == 'New Zealand') & 
+                 (df['product'].isin(['Mint Chip Choco', '85% Dark Bars', 'Eclairs', 'White Choc', 'After Nines']))]
+print(new_products.head())
+
+p_new_products = sns.relplot(data = new_products,\
+                  x = 'month', y = 'sales', \
+                  kind = 'line', \
+                  col = 'product', col_wrap = 3, \
+                  marker = 'o', \
+                  errorbar = None)
+
+## top 5 USA
+USA_product = df.query('country == "USA"').sort_values('sales', ascending = False)
+top5_usa_product = USA_product.groupby(['product', 'country'])['sales'].sum().sort_values(ascending=False).reset_index().head(5)
+print(top5_usa_product.head())
+
+## Filter for specific products in the USA
+usa_products = df[(df['country'] == 'USA') & 
+                 (df['product'].isin(['Raspberry Choco', 'Manuka Honey Choco', 'White Choc', '50% Dark Bites', '85% Dark Bars']))]
+print(usa_products.head())
+
+p_usa_products = sns.relplot(data = usa_products,\
+                  x = 'month', y = 'sales', \
+                  kind = 'line', \
+                  col = 'product', col_wrap = 3, \
+                  marker = 'o', \
+                  errorbar = None)
+## top 5 Canada
+CAN_product = df.query('country == "Canada"').sort_values('sales', ascending = False)
+top5_can_product = CAN_product.groupby(['product', 'country'])['sales'].sum().sort_values(ascending=False).reset_index().head(5)
+print(top5_can_product.head())
+
+## Filter for specific products in the Canada
+can_products = df[(df['country'] == 'Canada') & 
+                 (df['product'].isin(['Smooth Sliky Salty', 'Peanut Butter Cubes', '70% Dark Bites', 'Spicy Special Slims', 'Choco Coated Almonds']))]
+print(can_products.head())
 
 
+p_canada_products = sns.relplot(data = can_products,\
+                    x = 'month', y = 'sales', \
+                    kind = 'line', \
+                    col = 'product', col_wrap = 3, \
+                    marker = 'o', \
+                    errorbar = None)
 
+# 3. Target Profiles
+## during not having customers columns , i will analyze target profile by using products
+## top 5 UK
+UK_product = df.query('country == "UK"').sort_values('sales', ascending = False)
+top5_uk_product = UK_product.groupby(['product', 'country'])['sales'].sum().sort_values(ascending=False).reset_index().head(5)
+print(top5_uk_product.head())
 
+## top 5 India
+IN_product = df.query('country == "India"').sort_values('sales', ascending = False)
+top5_in_product = IN_product.groupby(['product', 'country'])['sales'].sum().sort_values(ascending=False).reset_index().head(5)
+print(top5_in_product.head())
 
+## top 5 Australia
+AUS_product = df.query('country == "Australia"').sort_values('sales', ascending = False)
+top5_aus_product = AUS_product.groupby(['product', 'country'])['sales'].sum().sort_values(ascending=False).reset_index().head(5)
+print(top5_aus_product.head())
+
+## top 5 new zealand
+NEW_product = df.query('country == "New Zealand"').sort_values('sales', ascending = False)
+top5_new_product = NEW_product.groupby(['product', 'country'])['sales'].sum().sort_values(ascending=False).reset_index().head(5)
+print(top5_new_product.head())
+
+## top 5 USA
+USA_product = df.query('country == "USA"').sort_values('sales', ascending = False)
+top5_usa_product = USA_product.groupby(['product', 'country'])['sales'].sum().sort_values(ascending=False).reset_index().head(5)
+print(top5_usa_product.head())
+
+## top 5 Canada
+CAN_product = df.query('country == "Canada"').sort_values('sales', ascending = False)
+top5_can_product = CAN_product.groupby(['product', 'country'])['sales'].sum().sort_values(ascending=False).reset_index().head(5)
+print(top5_can_product.head())
